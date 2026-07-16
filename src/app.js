@@ -18,7 +18,7 @@ app.get("/", (req, res) => {
   });
 });
 
-app.use("api", apiRoutes);
+app.use("/api", apiRoutes);
 app.use(notFound);
 app.use(errorHandler);
 
