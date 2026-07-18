@@ -115,6 +115,28 @@ const getTargets = async (req, res, next) => {
   }
 };
 
+const deleteTarget = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const target = await Target.findById(id);
+
+    if (!target) {
+      const error = new Error("Target not found.");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    await Target.findByIdAndDelete(id);
+
+    res.status(200).json({
+      success: true,
+      message: "Target deleted successfully.",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const getMyTarget = async (req, res, next) => {
   try {
     const now = new Date();
@@ -146,6 +168,7 @@ const getMyTarget = async (req, res, next) => {
 };
 
 module.exports = {
+  deleteTarget,
   getMyTarget,
   getTargets,
   saveTarget,

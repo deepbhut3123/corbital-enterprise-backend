@@ -178,6 +178,26 @@ const getUsers = async (req, res, next) => {
   }
 };
 
+const getCurrentUser = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.auth.userId);
+
+    if (!user) {
+      const error = new Error("User not found.");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Current user fetched successfully.",
+      data: formatUserResponse(user),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const updateUser = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -290,6 +310,7 @@ const deleteUser = async (req, res, next) => {
 module.exports = {
   createUser,
   deleteUser,
+  getCurrentUser,
   getUsers,
   loginUser,
   updateUser,

@@ -109,6 +109,89 @@ const createValueEntry = async (req, res, next) => {
   }
 };
 
+const updateValueEntry = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const {
+      entryDate: entryDateInput,
+      purchaseAmount,
+      sellAmount,
+      userId: selectedUserId,
+    } = req.body;
+    const requesterRoleId = String(req.auth?.roleId || "").trim().toLowerCase();
+    const isAdmin = isAdminRole(requesterRoleId);
+    const entry = await ValueEntry.findById(id);
+
+    if (!entry) {
+      const error = new Error("Value entry not found.");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (!isAdmin && entry.userId.toString() !== req.auth.userId) {
+      const error = new Error("You can only update your own value entries.");
+      error.statusCode = 403;
+      throw error;
+    }
+
+    const userId = isAdmin ? selectedUserId || entry.userId : req.auth.userId;
+    const user = await User.findById(userId);
+
+    if (!user) {
+      const error = new Error("Selected user not found.");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    entry.entryDate = parseEntryDate(entryDateInput);
+    entry.purchaseAmount = parseAmount(purchaseAmount, "purchaseAmount");
+    entry.sellAmount = parseAmount(sellAmount, "sellAmount");
+    entry.userId = userId;
+
+    await entry.save();
+
+    const populatedEntry = await populateValueEntry(ValueEntry.findById(entry._id));
+
+    res.status(200).json({
+      success: true,
+      message: "Value entry updated successfully.",
+      data: formatValueEntryResponse(populatedEntry),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const deleteValueEntry = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const requesterRoleId = String(req.auth?.roleId || "").trim().toLowerCase();
+    const isAdmin = isAdminRole(requesterRoleId);
+    const entry = await ValueEntry.findById(id);
+
+    if (!entry) {
+      const error = new Error("Value entry not found.");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (!isAdmin && entry.userId.toString() !== req.auth.userId) {
+      const error = new Error("You can only delete your own value entries.");
+      error.statusCode = 403;
+      throw error;
+    }
+
+    await ValueEntry.findByIdAndDelete(id);
+
+    res.status(200).json({
+      success: true,
+      message: "Value entry deleted successfully.",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const getValueEntries = async (req, res, next) => {
   try {
     const requesterRoleId = String(req.auth?.roleId || "").trim().toLowerCase();
@@ -131,5 +214,7 @@ const getValueEntries = async (req, res, next) => {
 
 module.exports = {
   createValueEntry,
+  deleteValueEntry,
   getValueEntries,
+  updateValueEntry,
 };
