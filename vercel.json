@@ -1,5 +1,11 @@
 {
   "version": 2,
+  "crons": [
+    {
+      "path": "/api/cron/holiday-attendance",
+      "schedule": "5 19 * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/(.*)",
@@ -7,3 +13,4 @@
     }
   ]
 }
+

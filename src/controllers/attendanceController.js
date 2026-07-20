@@ -1,11 +1,14 @@
 const mongoose = require("mongoose");
 
 const Attendance = require("../models/Attendance");
+const Holiday = require("../models/Holiday");
 const User = require("../models/User");
 
 const ADMIN_ROLE_VALUES = ["1", "admin"];
 const ATTENDANCE_ACTIONS = ["check_in", "break_start", "break_end", "check_out"];
 const ATTENDANCE_TIMEZONE = "Asia/Kolkata";
+const FULL_DAY_MINUTES = 510;
+const HALF_DAY_MINUTES = 255;
 
 const rawOfficeLatitude = (process.env.ATTENDANCE_LATITUDE || "").trim();
 const rawOfficeLongitude = (process.env.ATTENDANCE_LONGITUDE || "").trim();
@@ -67,6 +70,10 @@ const getMonthRange = (month, year) => ({
   end: new Date(Date.UTC(year, month, 1)),
   start: new Date(Date.UTC(year, month - 1, 1)),
 });
+
+const formatDateKey = date => new Date(date).toISOString().slice(0, 10);
+
+const isSundayDate = date => new Date(date).getUTCDay() === 0;
 
 const getDistanceInMeters = (
   latitudeA,
@@ -176,11 +183,50 @@ const calculateTotalMinutes = logs => {
   return Math.max(Math.round(totalMilliseconds / 60000), 0);
 };
 
-const formatAttendanceResponse = attendance => ({
-  attendanceDate: new Date(attendance.attendanceDate).toISOString().slice(0, 10),
-  createdAt: attendance.createdAt,
-  id: attendance._id.toString(),
-  logs: [...(attendance.logs || [])]
+const getAttendanceStatus = ({ attendanceDate, holiday, logs, totalMinutes }) => {
+  if (holiday) {
+    return {
+      status: "holiday",
+      statusLabel: holiday.name || "Holiday",
+    };
+  }
+
+  if (isSundayDate(attendanceDate)) {
+    return {
+      status: "sunday",
+      statusLabel: "Sunday",
+    };
+  }
+
+  if (!logs.length) {
+    return {
+      status: "absent",
+      statusLabel: "Absent",
+    };
+  }
+
+  if (totalMinutes >= FULL_DAY_MINUTES) {
+    return {
+      status: "present",
+      statusLabel: "Present",
+    };
+  }
+
+  if (totalMinutes >= HALF_DAY_MINUTES) {
+    return {
+      status: "half_day",
+      statusLabel: "Half Day",
+    };
+  }
+
+  return {
+    status: "absent",
+    statusLabel: "Absent",
+  };
+};
+
+const formatAttendanceResponse = (attendance, holiday = null) => {
+  const logs = [...(attendance.logs || [])]
     .sort(
       (left, right) =>
         new Date(left.recordedAt).getTime() - new Date(right.recordedAt).getTime()
@@ -195,14 +241,107 @@ const formatAttendanceResponse = attendance => ({
       longitude: typeof log.longitude === "number" ? log.longitude : null,
       notes: log.notes || null,
       recordedAt: log.recordedAt,
-    })),
-  totalMinutes: attendance.totalMinutes,
-  userEmail: attendance.userId?.email || "",
-  userId: attendance.userId?._id
-    ? attendance.userId._id.toString()
-    : attendance.userId.toString(),
-  username: attendance.userId?.username || "",
-});
+    }));
+  const totalMinutes = attendance.totalMinutes || 0;
+  const { status, statusLabel } = getAttendanceStatus({
+    attendanceDate: attendance.attendanceDate,
+    holiday,
+    logs,
+    totalMinutes,
+  });
+
+  return {
+    attendanceDate: formatDateKey(attendance.attendanceDate),
+    createdAt: attendance.createdAt,
+    id: attendance._id.toString(),
+    logs,
+    status,
+    statusLabel,
+    totalMinutes,
+    userEmail: attendance.userId?.email || "",
+    userId: attendance.userId?._id
+      ? attendance.userId._id.toString()
+      : attendance.userId.toString(),
+    username: attendance.userId?.username || "",
+  };
+};
+
+const formatSyntheticAttendanceResponse = ({ attendanceDate, holiday, user }) => {
+  const { status, statusLabel } = getAttendanceStatus({
+    attendanceDate,
+    holiday,
+    logs: [],
+    totalMinutes: 0,
+  });
+
+  return {
+    attendanceDate: formatDateKey(attendanceDate),
+    createdAt: null,
+    id: `${user._id.toString()}-${formatDateKey(attendanceDate)}`,
+    logs: [],
+    status,
+    statusLabel,
+    totalMinutes: 0,
+    userEmail: user.email || "",
+    userId: user._id.toString(),
+    username: user.username || "",
+  };
+};
+
+const buildMonthDates = (month, year) => {
+  const today = getIndiaDateParts();
+
+  if (year > today.year || (year === today.year && month > today.month)) {
+    return [];
+  }
+
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const lastDay =
+    year === today.year && month === today.month ? today.day : daysInMonth;
+
+  return Array.from(
+    { length: lastDay },
+    (_, index) => new Date(Date.UTC(year, month - 1, index + 1))
+  );
+};
+
+const buildAttendanceListResponse = ({ holidays, month, records, users, year }) => {
+  const holidayByDate = new Map(
+    holidays.map(holiday => [formatDateKey(holiday.holidayDate), holiday])
+  );
+  const recordByUserDate = new Map(
+    records.map(record => [
+      `${record.userId?._id ? record.userId._id.toString() : record.userId.toString()}-${formatDateKey(record.attendanceDate)}`,
+      record,
+    ])
+  );
+  const responses = [];
+
+  users.forEach(user => {
+    buildMonthDates(month, year).forEach(attendanceDate => {
+      const dateKey = formatDateKey(attendanceDate);
+      const recordKey = `${user._id.toString()}-${dateKey}`;
+      const record = recordByUserDate.get(recordKey);
+      const holiday = holidayByDate.get(dateKey) || null;
+
+      responses.push(
+        record
+          ? formatAttendanceResponse(record, holiday)
+          : formatSyntheticAttendanceResponse({ attendanceDate, holiday, user })
+      );
+    });
+  });
+
+  return responses.sort((left, right) => {
+    const dateCompare = right.attendanceDate.localeCompare(left.attendanceDate);
+
+    if (dateCompare !== 0) {
+      return dateCompare;
+    }
+
+    return left.username.localeCompare(right.username);
+  });
+};
 
 const populateAttendance = query =>
   query.populate("userId", "username email");
@@ -323,6 +462,7 @@ const getAttendanceRecords = async (req, res, next) => {
         $lt: end,
       },
     };
+    const userQuery = {};
 
     if (selectedUserId) {
       if (!mongoose.Types.ObjectId.isValid(selectedUserId)) {
@@ -340,16 +480,24 @@ const getAttendanceRecords = async (req, res, next) => {
       }
 
       query.userId = selectedUserId;
+      userQuery._id = selectedUserId;
     }
 
-    const records = await populateAttendance(
-      Attendance.find(query).sort({ attendanceDate: -1, createdAt: -1 })
-    );
+    const [records, holidays, users] = await Promise.all([
+      populateAttendance(Attendance.find(query).sort({ attendanceDate: -1, createdAt: -1 })),
+      Holiday.find({
+        holidayDate: {
+          $gte: start,
+          $lt: end,
+        },
+      }),
+      User.find(userQuery).sort({ username: 1 }),
+    ]);
 
     res.status(200).json({
       success: true,
       message: "Attendance records fetched successfully.",
-      data: records.map(formatAttendanceResponse),
+      data: buildAttendanceListResponse({ holidays, month, records, users, year }),
     });
   } catch (error) {
     if (error instanceof mongoose.Error.CastError) {
@@ -370,20 +518,27 @@ const getMyAttendanceRecords = async (req, res, next) => {
     );
     const { start, end } = getMonthRange(month, year);
 
-    const records = await populateAttendance(
-      Attendance.find({
+    const [records, holidays, users] = await Promise.all([
+      populateAttendance(Attendance.find({
         attendanceDate: {
           $gte: start,
           $lt: end,
         },
         userId: req.auth.userId,
-      }).sort({ attendanceDate: -1, createdAt: -1 })
-    );
+      }).sort({ attendanceDate: -1, createdAt: -1 })),
+      Holiday.find({
+        holidayDate: {
+          $gte: start,
+          $lt: end,
+        },
+      }),
+      User.find({ _id: req.auth.userId }),
+    ]);
 
     res.status(200).json({
       success: true,
       message: "Attendance records fetched successfully.",
-      data: records.map(formatAttendanceResponse),
+      data: buildAttendanceListResponse({ holidays, month, records, users, year }),
     });
   } catch (error) {
     next(error);
