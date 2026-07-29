@@ -7,6 +7,7 @@ const User = require("../models/User");
 const ADMIN_ROLE_VALUES = ["1", "admin"];
 const ATTENDANCE_ACTIONS = ["check_in", "break_start", "break_end", "check_out"];
 const ATTENDANCE_TIMEZONE = "Asia/Kolkata";
+const ATTENDANCE_TIMEZONE_OFFSET_MINUTES = 330;
 const FULL_DAY_MINUTES = 510;
 const HALF_DAY_MINUTES = 255;
 
@@ -74,6 +75,54 @@ const getMonthRange = (month, year) => ({
 const formatDateKey = date => new Date(date).toISOString().slice(0, 10);
 
 const isSundayDate = date => new Date(date).getUTCDay() === 0;
+
+const parseAttendanceDateKey = value => {
+  const normalizedValue = String(value || "").trim();
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedValue)) {
+    return null;
+  }
+
+  const [year, month, day] = normalizedValue.split("-").map(Number);
+  const date = getAttendanceDate(year, month, day);
+
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return date;
+};
+
+const parseAttendanceLogTimestamp = (attendanceDate, value) => {
+  const normalizedValue = String(value || "").trim();
+
+  if (!/^\d{2}:\d{2}$/.test(normalizedValue)) {
+    return null;
+  }
+
+  const [hours, minutes] = normalizedValue.split(":").map(Number);
+
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+
+  return new Date(
+    Date.UTC(
+      attendanceDate.getUTCFullYear(),
+      attendanceDate.getUTCMonth(),
+      attendanceDate.getUTCDate(),
+      hours,
+      minutes,
+      0,
+      0
+    ) -
+      ATTENDANCE_TIMEZONE_OFFSET_MINUTES * 60000
+  );
+};
 
 const getDistanceInMeters = (
   latitudeA,
@@ -346,6 +395,71 @@ const buildAttendanceListResponse = ({ holidays, month, records, users, year }) 
 const populateAttendance = query =>
   query.populate("userId", "username email");
 
+const buildAdminAttendanceLogs = (attendanceDate, logsInput) => {
+  if (!Array.isArray(logsInput)) {
+    const error = new Error("logs must be an array.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const logs = logsInput
+    .map(log => ({
+      action: String(log?.action || "").trim(),
+      address: log?.address || null,
+      distanceMeters:
+        log?.distanceMeters === null || log?.distanceMeters === undefined || log?.distanceMeters === ""
+          ? null
+          : Number(log.distanceMeters),
+      latitude:
+        log?.latitude === null || log?.latitude === undefined || log?.latitude === ""
+          ? null
+          : Number(log.latitude),
+      longitude:
+        log?.longitude === null || log?.longitude === undefined || log?.longitude === ""
+          ? null
+          : Number(log.longitude),
+      notes: log?.notes || null,
+      recordedAt: parseAttendanceLogTimestamp(attendanceDate, log?.time),
+    }))
+    .filter(log => log.action || log.recordedAt);
+
+  logs.forEach(log => {
+    if (!ATTENDANCE_ACTIONS.includes(log.action)) {
+      const error = new Error("Each log action must be one of check_in, break_start, break_end, or check_out.");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if (!log.recordedAt) {
+      const error = new Error("Each log time must be in HH:mm format.");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if (log.latitude !== null && !Number.isFinite(log.latitude)) {
+      const error = new Error("Log latitude must be a valid number.");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if (log.longitude !== null && !Number.isFinite(log.longitude)) {
+      const error = new Error("Log longitude must be a valid number.");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if (log.distanceMeters !== null && (!Number.isFinite(log.distanceMeters) || log.distanceMeters < 0)) {
+      const error = new Error("Log distance must be a valid positive number.");
+      error.statusCode = 400;
+      throw error;
+    }
+  });
+
+  return logs.sort(
+    (left, right) => new Date(left.recordedAt).getTime() - new Date(right.recordedAt).getTime()
+  );
+};
+
 const createAttendanceAction = async (req, res, next) => {
   try {
     const { action, latitude, longitude } = req.body;
@@ -545,8 +659,81 @@ const getMyAttendanceRecords = async (req, res, next) => {
   }
 };
 
+const updateAttendanceRecord = async (req, res, next) => {
+  try {
+    const recordId = String(req.params.id || "").trim();
+    const userId = String(req.body.userId || "").trim();
+    const attendanceDate = parseAttendanceDateKey(req.body.attendanceDate);
+
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      const error = new Error("userId must be a valid user id.");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if (!attendanceDate) {
+      const error = new Error("attendanceDate must be in YYYY-MM-DD format.");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const user = await User.findById(userId);
+
+    if (!user) {
+      const error = new Error("Selected user not found.");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const nextLogs = buildAdminAttendanceLogs(attendanceDate, req.body.logs);
+    const query = mongoose.Types.ObjectId.isValid(recordId)
+      ? { _id: recordId }
+      : { attendanceDate, userId };
+
+    const savedRecord = await Attendance.findOneAndUpdate(
+      query,
+      {
+        $set: {
+          attendanceDate,
+          logs: nextLogs,
+          totalMinutes: calculateTotalMinutes(nextLogs),
+          userId,
+        },
+      },
+      {
+        new: true,
+        runValidators: true,
+        setDefaultsOnInsert: true,
+        upsert: true,
+      }
+    );
+
+    const populatedRecord = await populateAttendance(Attendance.findById(savedRecord._id));
+    const holiday = await Holiday.findOne({ holidayDate: attendanceDate });
+
+    res.status(200).json({
+      success: true,
+      message: "Attendance record updated successfully.",
+      data: formatAttendanceResponse(populatedRecord, holiday),
+    });
+  } catch (error) {
+    if (error?.code === 11000) {
+      error.statusCode = 400;
+      error.message = "Attendance already exists for this user and date.";
+    }
+
+    if (error instanceof mongoose.Error.CastError) {
+      error.statusCode = 400;
+      error.message = "Invalid attendance update request.";
+    }
+
+    next(error);
+  }
+};
+
 module.exports = {
   createAttendanceAction,
   getAttendanceRecords,
   getMyAttendanceRecords,
+  updateAttendanceRecord,
 };
