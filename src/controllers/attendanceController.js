@@ -5,10 +5,10 @@ const Holiday = require("../models/Holiday");
 const User = require("../models/User");
 
 const ADMIN_ROLE_VALUES = ["1", "admin"];
-const ATTENDANCE_ACTIONS = ["check_in", "break_start", "break_end", "check_out"];
+const ATTENDANCE_ACTIONS = ["check_in", "check_out"];
 const ATTENDANCE_TIMEZONE = "Asia/Kolkata";
 const ATTENDANCE_TIMEZONE_OFFSET_MINUTES = 330;
-const FULL_DAY_MINUTES = 510;
+const FULL_DAY_MINUTES = 8 * 60;
 const HALF_DAY_MINUTES = 255;
 
 const rawOfficeLatitude = (process.env.ATTENDANCE_LATITUDE || "").trim();
@@ -167,11 +167,7 @@ const getAllowedNextActions = logs => {
 
   switch (lastAction) {
     case "check_in":
-      return ["break_start", "check_out"];
-    case "break_start":
-      return ["break_end"];
-    case "break_end":
-      return ["break_start", "check_out"];
+      return ["check_out"];
     case "check_out":
       return [];
     default:
@@ -183,25 +179,17 @@ const getActionErrorMessage = (action, logs) => {
   if (!logs.length) {
     return action === "check_in"
       ? null
-      : "First attendance action of the day must be Check In.";
+      : "First attendance action of the day must be Punch In.";
   }
 
   const lastAction = logs[logs.length - 1].action;
 
   if (lastAction === "check_out") {
-    return "Attendance for today is already closed after Check Out.";
+    return "Attendance for today is already closed after Punch Out.";
   }
 
   if (lastAction === "check_in") {
-    return "After Check In, only Break Start or Check Out is allowed.";
-  }
-
-  if (lastAction === "break_start") {
-    return "After Break Start, only Break End is allowed.";
-  }
-
-  if (lastAction === "break_end") {
-    return "After Break End, only Break Start or Check Out is allowed.";
+    return "After Punch In, only Punch Out is allowed.";
   }
 
   return `Action ${action} is not allowed right now.`;
@@ -212,22 +200,18 @@ const calculateTotalMinutes = logs => {
     (left, right) => new Date(left.recordedAt).getTime() - new Date(right.recordedAt).getTime()
   );
 
-  let activeStartTime = null;
-  let totalMilliseconds = 0;
+  const punchIn = sortedLogs.find(log => log.action === "check_in");
+  const punchOut = [...sortedLogs]
+    .reverse()
+    .find(log => log.action === "check_out");
 
-  sortedLogs.forEach(log => {
-    const logTime = new Date(log.recordedAt).getTime();
+  if (!punchIn || !punchOut) {
+    return 0;
+  }
 
-    if (log.action === "check_in" || log.action === "break_end") {
-      activeStartTime = logTime;
-      return;
-    }
-
-    if ((log.action === "break_start" || log.action === "check_out") && activeStartTime) {
-      totalMilliseconds += Math.max(logTime - activeStartTime, 0);
-      activeStartTime = null;
-    }
-  });
+  const totalMilliseconds =
+    new Date(punchOut.recordedAt).getTime() -
+    new Date(punchIn.recordedAt).getTime();
 
   return Math.max(Math.round(totalMilliseconds / 60000), 0);
 };
@@ -276,6 +260,7 @@ const getAttendanceStatus = ({ attendanceDate, holiday, logs, totalMinutes }) =>
 
 const formatAttendanceResponse = (attendance, holiday = null) => {
   const logs = [...(attendance.logs || [])]
+    .filter(log => ATTENDANCE_ACTIONS.includes(log.action))
     .sort(
       (left, right) =>
         new Date(left.recordedAt).getTime() - new Date(right.recordedAt).getTime()
@@ -425,7 +410,7 @@ const buildAdminAttendanceLogs = (attendanceDate, logsInput) => {
 
   logs.forEach(log => {
     if (!ATTENDANCE_ACTIONS.includes(log.action)) {
-      const error = new Error("Each log action must be one of check_in, break_start, break_end, or check_out.");
+      const error = new Error("Each log action must be either check_in or check_out.");
       error.statusCode = 400;
       throw error;
     }
@@ -465,7 +450,7 @@ const createAttendanceAction = async (req, res, next) => {
     const { action, latitude, longitude } = req.body;
 
     if (!ATTENDANCE_ACTIONS.includes(String(action || "").trim())) {
-      const error = new Error("action must be one of check_in, break_start, break_end, or check_out.");
+      const error = new Error("action must be either check_in or check_out.");
       error.statusCode = 400;
       throw error;
     }
@@ -510,7 +495,9 @@ const createAttendanceAction = async (req, res, next) => {
     });
 
     const logs = existingRecord ? [...existingRecord.logs] : [];
-    const allowedActions = getAllowedNextActions(logs);
+    const allowedActions = getAllowedNextActions(
+      logs.filter(log => ATTENDANCE_ACTIONS.includes(log.action))
+    );
 
     if (!allowedActions.includes(action)) {
       const error = new Error(getActionErrorMessage(action, logs));

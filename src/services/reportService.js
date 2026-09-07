@@ -5,7 +5,7 @@ const User = require("../models/User");
 const ValueEntry = require("../models/ValueEntry");
 
 const ATTENDANCE_TIMEZONE = "Asia/Kolkata";
-const FULL_DAY_MINUTES = 510;
+const SALARY_DAY_MINUTES = 8 * 60;
 
 const getValidatedMonthYear = (monthInput, yearInput) => {
   const month = Number(monthInput);
@@ -91,22 +91,18 @@ const calculateTotalMinutes = logs => {
   const sortedLogs = [...logs].sort(
     (left, right) => new Date(left.recordedAt).getTime() - new Date(right.recordedAt).getTime()
   );
-  let activeStartTime = null;
-  let totalMilliseconds = 0;
+  const punchIn = sortedLogs.find(log => log.action === "check_in");
+  const punchOut = [...sortedLogs]
+    .reverse()
+    .find(log => log.action === "check_out");
 
-  sortedLogs.forEach(log => {
-    const logTime = new Date(log.recordedAt).getTime();
+  if (!punchIn || !punchOut) {
+    return 0;
+  }
 
-    if (log.action === "check_in" || log.action === "break_end") {
-      activeStartTime = logTime;
-      return;
-    }
-
-    if ((log.action === "break_start" || log.action === "check_out") && activeStartTime) {
-      totalMilliseconds += Math.max(logTime - activeStartTime, 0);
-      activeStartTime = null;
-    }
-  });
+  const totalMilliseconds =
+    new Date(punchOut.recordedAt).getTime() -
+    new Date(punchIn.recordedAt).getTime();
 
   return Math.max(Math.round(totalMilliseconds / 60000), 0);
 };
@@ -117,27 +113,7 @@ const getAttendanceTimes = logs => {
   );
   const checkInLog = sortedLogs.find(log => log.action === "check_in");
   const checkOutLog = [...sortedLogs].reverse().find(log => log.action === "check_out");
-  const breaks = [];
-  let breakStart = null;
-
-  sortedLogs.forEach(log => {
-    if (log.action === "break_start") {
-      breakStart = log;
-      return;
-    }
-
-    if (log.action === "break_end" && breakStart) {
-      breaks.push(`${formatTime(breakStart.recordedAt)} - ${formatTime(log.recordedAt)}`);
-      breakStart = null;
-    }
-  });
-
-  if (breakStart) {
-    breaks.push(`${formatTime(breakStart.recordedAt)} - Running`);
-  }
-
   return {
-    breaks: breaks.length ? breaks : ["-"],
     checkIn: formatTime(checkInLog?.recordedAt),
     checkOut: formatTime(checkOutLog?.recordedAt),
   };
@@ -220,7 +196,7 @@ const buildSalaryReport = async ({ month: monthInput, userId, year: yearInput })
   const workingDays = monthDates.filter(
     ({ date, key }) => !isSundayDate(date) && !holidayByDate.has(key)
   ).length;
-  const expectedWorkingMinutes = workingDays * FULL_DAY_MINUTES;
+  const expectedWorkingMinutes = workingDays * SALARY_DAY_MINUTES;
   const hourlySalary = expectedWorkingMinutes
     ? user.fixedSalary / (expectedWorkingMinutes / 60)
     : 0;
@@ -240,7 +216,10 @@ const buildSalaryReport = async ({ month: monthInput, userId, year: yearInput })
     const status = hasAttendance ? "Present" : holiday || isSunday ? "Holiday" : "Absent";
     const statusLabel =
       status === "Holiday" ? holiday?.name || "Sunday" : status;
-    const payableMinutes = status === "Holiday" ? FULL_DAY_MINUTES : workedMinutes;
+    const payableMinutes =
+      status === "Holiday"
+        ? SALARY_DAY_MINUTES
+        : Math.min(workedMinutes, SALARY_DAY_MINUTES);
     const hourlyPayable = (payableMinutes / 60) * hourlySalary;
     const times = getAttendanceTimes(logs);
 
@@ -256,7 +235,6 @@ const buildSalaryReport = async ({ month: monthInput, userId, year: yearInput })
     fixedPayable += hourlyPayable;
 
     return {
-      breaks: times.breaks,
       checkIn: times.checkIn,
       checkOut: times.checkOut,
       date: key,

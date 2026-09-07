@@ -1,5 +1,6 @@
 const Attendance = require("../models/Attendance");
 
+const ATTENDANCE_ACTIONS = ["check_in", "check_out"];
 const ATTENDANCE_TIMEZONE = "Asia/Kolkata";
 const ATTENDANCE_TIMEZONE_OFFSET_MINUTES = 330;
 const ONE_MINUTE_MS = 60 * 1000;
@@ -64,22 +65,18 @@ const calculateTotalMinutes = logs => {
     (left, right) => new Date(left.recordedAt).getTime() - new Date(right.recordedAt).getTime()
   );
 
-  let activeStartTime = null;
-  let totalMilliseconds = 0;
+  const punchIn = sortedLogs.find(log => log.action === "check_in");
+  const punchOut = [...sortedLogs]
+    .reverse()
+    .find(log => log.action === "check_out");
 
-  sortedLogs.forEach(log => {
-    const logTime = new Date(log.recordedAt).getTime();
+  if (!punchIn || !punchOut) {
+    return 0;
+  }
 
-    if (log.action === "check_in" || log.action === "break_end") {
-      activeStartTime = logTime;
-      return;
-    }
-
-    if ((log.action === "break_start" || log.action === "check_out") && activeStartTime) {
-      totalMilliseconds += Math.max(logTime - activeStartTime, 0);
-      activeStartTime = null;
-    }
-  });
+  const totalMilliseconds =
+    new Date(punchOut.recordedAt).getTime() -
+    new Date(punchIn.recordedAt).getTime();
 
   return Math.max(Math.round(totalMilliseconds / 60000), 0);
 };
@@ -88,26 +85,12 @@ const buildCompletionLogs = (logs, recordedAt) => {
   const sortedLogs = [...logs].sort(
     (left, right) => new Date(left.recordedAt).getTime() - new Date(right.recordedAt).getTime()
   );
-  const lastLog = sortedLogs[sortedLogs.length - 1];
+  const lastLog = [...sortedLogs]
+    .reverse()
+    .find(log => ATTENDANCE_ACTIONS.includes(log.action));
 
   if (!lastLog || lastLog.action === "check_out") {
     return null;
-  }
-
-  if (lastLog.action === "break_start") {
-    return [
-      ...sortedLogs,
-      {
-        action: "break_end",
-        notes: "Auto completed by server.",
-        recordedAt,
-      },
-      {
-        action: "check_out",
-        notes: "Auto completed by server.",
-        recordedAt,
-      },
-    ];
   }
 
   return [

@@ -4,7 +4,6 @@ const attendanceLogSchema = new mongoose.Schema(
   {
     action: {
       type: String,
-      enum: ["check_in", "break_start", "break_end", "check_out"],
       required: true,
       trim: true,
     },

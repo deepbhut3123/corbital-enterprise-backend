@@ -203,10 +203,9 @@ const createSalaryReportPdf = (report, outputStream) => {
               ? "#1d4ed8"
               : "#991b1b",
       },
-      { key: "checkIn", label: "Check In", width: 58 },
-      { key: "breaks", label: "Breaks", width: 130, render: row => row.breaks.join("\n") },
-      { key: "checkOut", label: "Check Out", width: 58 },
-      { key: "workedTime", label: "Worked", width: 58 },
+      { key: "checkIn", label: "Punch In", width: 100 },
+      { key: "checkOut", label: "Punch Out", width: 100 },
+      { key: "workedTime", label: "Worked", width: 78 },
       {
         key: "hourlyPayable",
         label: "Payable",
@@ -216,10 +215,7 @@ const createSalaryReportPdf = (report, outputStream) => {
         render: row => formatMoney(row.hourlyPayable),
       },
     ],
-    report.attendanceRows.map(row => ({
-      ...row,
-      height: Math.max(28, row.breaks.length * 13 + 12),
-    })),
+    report.attendanceRows,
     { rowHeight: 28 }
   );
 
@@ -245,7 +241,7 @@ const createSalaryReportPdf = (report, outputStream) => {
   const salaryCalculationRows = [
     { label: "Fixed salary", value: formatMoney(report.employee.fixedSalary) },
     { label: "Working days excluding holidays", value: String(report.salary.workingDays) },
-    { label: "Expected working hours", value: `${Math.round(report.salary.workingDays * 8.5)}h` },
+    { label: "Expected working hours", value: `${report.salary.workingDays * 8}h` },
     { label: "Hourly salary", value: formatMoney(report.salary.hourlySalary) },
     { label: "Payable days, present plus paid holidays", value: String(report.salary.payableDays) },
     { label: "Fixed payable", value: formatMoney(report.salary.fixedPayable) },
