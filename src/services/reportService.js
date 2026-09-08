@@ -193,10 +193,8 @@ const buildSalaryReport = async ({ month: monthInput, userId, year: yearInput })
     holidays.map(holiday => [formatDateKey(holiday.holidayDate), holiday])
   );
   const monthDates = buildMonthDates(month, year);
-  const workingDays = monthDates.filter(
-    ({ date, key }) => !isSundayDate(date) && !holidayByDate.has(key)
-  ).length;
-  const expectedWorkingMinutes = workingDays * SALARY_DAY_MINUTES;
+  const salaryDays = monthDates.length;
+  const expectedWorkingMinutes = salaryDays * SALARY_DAY_MINUTES;
   const hourlySalary = expectedWorkingMinutes
     ? user.fixedSalary / (expectedWorkingMinutes / 60)
     : 0;
@@ -282,7 +280,7 @@ const buildSalaryReport = async ({ month: monthInput, userId, year: yearInput })
       totalPayable: fixedPayable + variablePayable,
       totalWorkedTime: formatDuration(totalWorkedMinutes),
       variablePayable,
-      workingDays,
+      salaryDays,
     },
     valueEntries: valueEntries.map(entry => ({
       date: formatDateKey(entry.entryDate),
