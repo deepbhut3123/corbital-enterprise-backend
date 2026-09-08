@@ -20,13 +20,20 @@ const writeKeyValue = (doc, label, value, x, y, width = 120) => {
 };
 
 const drawSectionTitle = (doc, title) => {
+  const titleX = 34;
+  const titleWidth = 526;
+
   if (doc.y > 740) {
     doc.addPage();
   }
 
   doc.moveDown(1.2);
-  doc.fillColor("#111827").fontSize(12).font("Helvetica-Bold").text(title);
-  doc.moveTo(doc.x, doc.y + 4).lineTo(560, doc.y + 4).strokeColor("#e5e7eb").stroke();
+  doc
+    .fillColor("#111827")
+    .fontSize(12)
+    .font("Helvetica-Bold")
+    .text(title, titleX, doc.y, { lineBreak: false, width: titleWidth });
+  doc.moveTo(titleX, doc.y + 4).lineTo(560, doc.y + 4).strokeColor("#e5e7eb").stroke();
   doc.moveDown(0.8);
 };
 
