@@ -241,7 +241,7 @@ const createSalaryReportPdf = (report, outputStream) => {
   const salaryCalculationRows = [
     { label: "Fixed salary", value: formatMoney(report.employee.fixedSalary) },
     { label: "Calendar days used for salary", value: String(report.salary.salaryDays) },
-    { label: "Payable time after daily 8h cap", value: report.salary.totalPayableTime },
+    { label: "Payable time", value: report.salary.totalPayableTime },
     { label: "Hourly salary", value: formatMoney(report.salary.hourlySalary) },
     { label: "Payable days, present plus paid holidays", value: String(report.salary.payableDays) },
     { label: "Fixed payable", value: formatMoney(report.salary.fixedPayable) },
