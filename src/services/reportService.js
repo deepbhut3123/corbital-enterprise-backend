@@ -201,7 +201,6 @@ const buildSalaryReport = async ({ month: monthInput, userId, year: yearInput })
   let presentDays = 0;
   let holidayDays = 0;
   let absentDays = 0;
-  let totalWorkedMinutes = 0;
   let totalPayableMinutes = 0;
   let fixedPayable = 0;
 
@@ -230,7 +229,6 @@ const buildSalaryReport = async ({ month: monthInput, userId, year: yearInput })
       absentDays += 1;
     }
 
-    totalWorkedMinutes += workedMinutes;
     totalPayableMinutes += payableMinutes;
     fixedPayable += hourlyPayable;
 
@@ -281,9 +279,6 @@ const buildSalaryReport = async ({ month: monthInput, userId, year: yearInput })
       targetAmount,
       totalPayable: fixedPayable + variablePayable,
       totalPayableTime: formatDuration(totalPayableMinutes),
-      totalWorkedTime: formatDuration(
-        totalWorkedMinutes + holidayDays * SALARY_DAY_MINUTES
-      ),
       variablePayable,
       salaryDays,
     },

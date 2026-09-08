@@ -157,7 +157,7 @@ const createSalaryReportPdf = (report, outputStream) => {
   writeKeyValue(doc, "PRESENT DAYS", String(report.salary.presentDays), 34, cardY);
   writeKeyValue(doc, "PAID HOLIDAYS", String(report.salary.holidayDays), 165, cardY);
   writeKeyValue(doc, "ABSENT DAYS", String(report.salary.absentDays), 296, cardY);
-  writeKeyValue(doc, "WORKED + HOLIDAY", report.salary.totalWorkedTime, 427, cardY);
+  writeKeyValue(doc, "PAYABLE TIME", report.salary.totalPayableTime, 427, cardY);
   doc.y = 240;
 
   drawSectionTitle(doc, "Salary And Target Summary");
