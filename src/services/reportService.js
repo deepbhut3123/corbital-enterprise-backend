@@ -3,6 +3,7 @@ const Holiday = require("../models/Holiday");
 const Target = require("../models/Target");
 const User = require("../models/User");
 const ValueEntry = require("../models/ValueEntry");
+const { getSalaryForMonth } = require("./salaryHistoryService");
 
 const ATTENDANCE_TIMEZONE = "Asia/Kolkata";
 const SALARY_DAY_MINUTES = 8 * 60;
@@ -162,7 +163,7 @@ const buildSalaryReport = async ({ month: monthInput, userId, year: yearInput })
   }
 
   const { start, end } = getMonthRange(month, year);
-  const [attendances, holidays, target, valueEntries] = await Promise.all([
+  const [attendances, holidays, salaryForMonth, target, valueEntries] = await Promise.all([
     Attendance.find({
       attendanceDate: {
         $gte: start,
@@ -176,6 +177,7 @@ const buildSalaryReport = async ({ month: monthInput, userId, year: yearInput })
         $lt: end,
       },
     }),
+    getSalaryForMonth({ month, user, year }),
     Target.findOne({ month, userId, year }),
     ValueEntry.find({
       entryDate: {
@@ -196,7 +198,7 @@ const buildSalaryReport = async ({ month: monthInput, userId, year: yearInput })
   const salaryDays = monthDates.length;
   const expectedWorkingMinutes = salaryDays * SALARY_DAY_MINUTES;
   const hourlySalary = expectedWorkingMinutes
-    ? user.fixedSalary / (expectedWorkingMinutes / 60)
+    ? salaryForMonth.fixedSalary / (expectedWorkingMinutes / 60)
     : 0;
   let presentDays = 0;
   let holidayDays = 0;
@@ -252,18 +254,18 @@ const buildSalaryReport = async ({ month: monthInput, userId, year: yearInput })
   );
   const targetAmount = target?.amount || 0;
   const targetAchievement = targetAmount ? Math.min(addedValue / targetAmount, 1) : 0;
-  const variablePayable = user.variableSalary * targetAchievement;
+  const variablePayable = salaryForMonth.variableSalary * targetAchievement;
 
   return {
     attendanceRows,
     employee: {
       email: user.email,
-      fixedSalary: user.fixedSalary,
+      fixedSalary: salaryForMonth.fixedSalary,
       id: user._id.toString(),
       phone: user.phone,
       roleId: user.roleId,
       username: user.username,
-      variableSalary: user.variableSalary,
+      variableSalary: salaryForMonth.variableSalary,
     },
     generatedAt: new Date(),
     month,

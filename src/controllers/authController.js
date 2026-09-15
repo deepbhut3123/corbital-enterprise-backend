@@ -1,4 +1,9 @@
+const mongoose = require("mongoose");
 const User = require("../models/User");
+const {
+  createInitialSalaryHistory,
+  recordSalaryChange,
+} = require("../services/salaryHistoryService");
 const { signAuthToken } = require("../utils/jwt");
 const { verifyTotpToken } = require("../utils/totp");
 
@@ -83,16 +88,27 @@ const createUser = async (req, res, next) => {
       throw error;
     }
 
-    const user = await User.create({
-      username,
-      email,
-      phone,
-      password,
-      fixedSalary,
-      variableSalary,
-      roleId,
-      authenticatorEnabled: false,
-      authenticatorSecret: null,
+    let user;
+
+    await mongoose.connection.transaction(async session => {
+      [user] = await User.create(
+        [
+          {
+            username,
+            email,
+            phone,
+            password,
+            fixedSalary,
+            variableSalary,
+            roleId,
+            authenticatorEnabled: false,
+            authenticatorSecret: null,
+          },
+        ],
+        { session }
+      );
+
+      await createInitialSalaryHistory(user, session);
     });
 
     res.status(201).json({
@@ -250,6 +266,9 @@ const updateUser = async (req, res, next) => {
       }
     }
 
+    const previousFixedSalary = user.fixedSalary;
+    const previousVariableSalary = user.variableSalary;
+
     user.username = username;
     user.email = email.toLowerCase();
     user.phone = phone;
@@ -261,7 +280,17 @@ const updateUser = async (req, res, next) => {
       user.password = password;
     }
 
-    await user.save();
+    await mongoose.connection.transaction(async session => {
+      await recordSalaryChange({
+        fixedSalary,
+        previousFixedSalary,
+        previousVariableSalary,
+        session,
+        user,
+        variableSalary,
+      });
+      await user.save({ session });
+    });
 
     res.status(200).json({
       success: true,
